@@ -1,0 +1,244 @@
+#include <Wire.h> 
+#include <DS1302.h>
+#include <LCD5110_Basic.h>
+#include <SoftwareSerial.h>
+
+#define pset 44         // pushbutton for setting alarm
+#define phour 45        // pushbutton for hour
+#define pmin 46        // pushbutton for minutes
+#define pexit 47       // pushbutton for exit of set alarm
+
+#define buzzer  53     
+
+#define button 41
+
+#define alarmledpin  A8
+
+SoftwareSerial BTSerial(10, 11); // CONNECT BT RX PIN TO ARDUINO 11 PIN | CONNECT BT TX PIN TO ARDUINO 10 PIN
+DS1302 rtc(2, 3, 4);   // Initialize the DS1302,define an timer object called rtc 
+Time t;                  //Time block for keeping the current time
+
+LCD5110 myDisplay(48,49,50,52,51);
+
+extern uint8_t SmallFont[];
+extern uint8_t BigNumbers[];
+extern uint8_t MediumNumbers[];
+
+int Hour;              //current-time variables
+int Min;
+
+int h;                 //alarm-time-keeping variables 
+int m; 
+int buttonforset = 0;     // pushbutton state variable for setting alarm
+int buttonforhour = 0;    // pushbutton state variable for hour
+int buttonformin = 0;     // pushbutton state variable for minutes
+int buttonforexit = 0;    // pushbutton state variable for exit of set alarm
+
+int activate=0;           //alarm-set-control variable (display the current time while the set buttton is not pressed which means activate=0 )
+                          //( when the set button is pressed,set activate to 1 and display the alarmtime-set menu )
+int cnt=0;
+int control=0;
+int check=0;
+int condition='0';          //incoming pulse sensor value -sleeping or not
+int a=1;
+int buttonstate=0;        //for closing the alarm and the pulse sensor completely
+int b=1;
+
+void display_current_time(void);
+
+void setup()
+{
+ Serial.begin(9600);
+ BTSerial.begin(38400);        // HC-05 default speed in AT command more
+  
+ pinMode(pset, INPUT);
+ pinMode(phour, INPUT);
+ pinMode(pmin, INPUT);
+ pinMode(pexit, INPUT);
+ pinMode(button,INPUT);
+ pinMode(alarmledpin,OUTPUT);
+
+ rtc.halt(false);               // Set the clock to run-mode 
+ rtc.writeProtect(false);       //Disable the write protection
+
+ myDisplay.InitLCD();
+
+ myDisplay.setFont(SmallFont);   
+ myDisplay.clrScr();    
+ myDisplay.print("WAKE UP",CENTER,0);
+ myDisplay.print("EARLY",CENTER,18);
+ myDisplay.print("PROJECT",CENTER,38);
+ delay(3000);
+ myDisplay.clrScr();
+     
+
+// The following lines can be commented out to use the values already stored in the DS1302
+// rtc.setDOW(THURSDAY); // Set Day-of-Week to FRIDAY
+// rtc.setTime(0, 33, 0); // Set the time to 12:00:00 (24hr format)
+// rtc.setDate(28, 2, 2019); // Set the date to August 6th, 2010    
+}
+
+void loop(){
+  
+ if (activate == 0) {                          //DISPLAYING AND STORING THE CURRENT TIME WHILE SET BUTTON IS NOT PRESSED (time is stored in orde to comare it with the alarm time)
+     //display the current time and date
+    
+      display_current_time();
+    
+      Hour = t.hour;                 
+      Min = t.min;
+ 
+      buttonforset = digitalRead(pset);       //control if alarm mode is selected,if not keep displaying the current time
+ 
+ }
+                            
+
+ if (buttonforset == HIGH) {                     // buttonforset basıldığında alarm mode a geç
+        activate=1;
+        myDisplay.clrScr(); 
+ }
+ while(activate== 1){                            //ALARM MODE      
+  
+    myDisplay.print("Alarm Select",CENTER,5);
+    myDisplay.print("Hour   :",LEFT,18);
+    myDisplay.print("Minute :",LEFT,38);
+    myDisplay.printNumI(h,RIGHT,18);              //initial values of the alarm (which are zeros) are displayed when yo first select the alarm set mode
+    myDisplay.printNumI(m,RIGHT,38);
+    
+    //read alarm control buttons and set the alarm
+           
+            buttonforhour = digitalRead(phour); // set hour for alarm
+          
+           if (buttonforhour == HIGH){
+                h++;
+               if (h>23){
+                   h=0;
+                  myDisplay.clrScr();   
+               }
+               myDisplay.printNumI(h,RIGHT,18);
+               delay(100); 
+             }
+           
+          buttonformin = digitalRead(pmin); // set minutes for alarm
+ 
+          if (buttonformin == HIGH){
+               m++;
+               if (m>59){
+                  m=0; 
+                  myDisplay.clrScr();   
+                }
+              myDisplay.printNumI(m,RIGHT,38);
+              delay(100); 
+           }
+
+           
+          buttonforexit = digitalRead(pexit); // exit from set alarm mode
+          
+          if (buttonforexit == HIGH){
+             activate = 0;
+             myDisplay.clrScr();
+           }
+ }
+ 
+
+ while (Hour== h && Min== m ) {                 //cnt=1 oldugunda, (surekli olan) ilk alarmdan cıkıcak ve nabza göre alarm caldırmaya baslayacak
+
+   buttonstate=digitalRead(button);
+   Serial.print("buttonstate  :");
+   Serial.println(buttonstate);
+   
+   t = rtc.getTime();                         //when the completely-close-button in the alarm minute, the program will be in a loop of while until the alarm minute passes. However, since b will be resetted when the button is pressed, the alarm will not ring even if the current time is the alarm time
+   Hour = t.hour;                             //For the alarm to ring the next day at the same alarm time, Hour and Min variables are updated frequently. When the alarm minute passes, the program gets out of the alarm loop(outer while loop) and sets b=1 and waits for next-day-the-same-alarm-time to ring, again.
+   Min = t.min;
+   
+   display_current_time();
+
+   if(buttonstate==0 && b==1){                    //until the alarm is closed the program will check the incoming pulse check value and ring the buzzer according to it                                                  
+                                                  //b is used to prevent the alarm from ringing in the current alarm time (when the completely-close-button is pressed)
+  if(1==BTSerial.print('1')){
+    Serial.println("1 is sent");
+    }                          //start pulse sensor  
+   else{
+    Serial.println("not sent");
+    } 
+    
+    
+    Serial.println("Start the pulse sensor!");
+
+       a=1;
+       while(a){
+           if(BTSerial.available()==1){    //check each incoming data and close/open the alarm depending on it
+
+               condition=BTSerial.read();  //condition = sleeping(0)or not(1)
+      
+               switch (condition){
+
+                  case '0':
+                     tone(53,1000);
+                     analogWrite(alarmledpin,1023);
+                     Serial.println("Alarm is opened");
+                     break;
+                    
+                  case '1':
+                     noTone(53); 
+                     analogWrite(alarmledpin,0);
+                     Serial.println("Alarm is closed");  
+                     break;
+                     
+                  default:
+                     Serial.println("Wrong incoming data");
+                     break;
+               }
+           }
+
+          buttonstate=digitalRead(button);
+            
+           if(buttonstate==1){     // if the button is pressed close the alarm and pulse sensor completely
+            
+            Serial.println("Alarm is, completely, closed!");
+            
+            BTSerial.print('0');        //stop pulse check command
+            noTone(53);                //close the alarm
+            analogWrite(alarmledpin,0);
+            a=0;
+            b=0;
+            } 
+
+          display_current_time();
+       }
+   }   
+
+   else if(buttonstate==1){                                  
+     
+      BTSerial.print('0');
+   }
+  
+  
+ }
+
+ b=1;                       //in order to let the alarm ring another day
+}
+
+
+void display_current_time(void){
+    
+      myDisplay.setFont(SmallFont);
+      
+      myDisplay.print("Time and Date",CENTER,0);
+      myDisplay.print("______________",CENTER,8);
+      myDisplay.print(rtc.getTimeStr(),CENTER,25);
+      myDisplay.print(rtc.getDateStr(),CENTER,38);
+
+       t = rtc.getTime();                                                                       //get the current time as a block and assign it to the Time variable t 
+      
+      if(t.hour==00 && t.min==00 && t.sec==00 && check==0 ){                                    //for preventing display error while writing sunday on saturday
+        myDisplay.clrScr();
+        check=1;
+       }
+      
+      myDisplay.print(rtc.getDOWStr(),CENTER,46);
+   
+     if(t.hour==00 && t.min==00 && t.sec==01 && check==1 ){                                    //for preventing display error while writing sunday on saturday
+        check=0;                                                                               //since the code works for too many times in a second, we should have cleared prevent clearing the screen for too many times in one second in upper code  
+        } 
+}
